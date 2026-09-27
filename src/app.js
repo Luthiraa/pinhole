@@ -5,6 +5,7 @@ const join = document.querySelector('#join');
 const session = document.querySelector('#session');
 const status = document.querySelector('#status');
 const shot = document.querySelector('#shot');
+const waiting = document.querySelector('#waiting');
 const typing = document.querySelector('#typing');
 const retry = document.querySelector('#retry');
 let secret = '';
@@ -14,6 +15,28 @@ let imageUrl;
 let inputQueue = Promise.resolve();
 let start;
 let touchY;
+
+function report(message, tone = '') {
+  status.textContent = message;
+  status.dataset.tone = tone;
+}
+
+function clearSession() {
+  clearInterval(timer);
+  timer = undefined;
+  secret = '';
+  session.hidden = true;
+  join.hidden = false;
+  if (imageUrl) URL.revokeObjectURL(imageUrl);
+  imageUrl = undefined;
+  shot.removeAttribute('src');
+  shot.hidden = true;
+  waiting.hidden = false;
+  retry.hidden = true;
+  typing.value = '';
+  start = undefined;
+  touchY = undefined;
+}
 
 async function request(path, data) {
   const response = await fetch(path, {
@@ -32,38 +55,45 @@ async function request(path, data) {
 
 async function refresh() {
   if (busy || !secret) return;
+  const current = secret;
   busy = true;
   try {
     const response = await request('/shot');
     const blob = await response.blob();
+    if (secret !== current) return;
     if (blob.type !== 'image/png') throw new Error('Invalid screen image');
     const next = URL.createObjectURL(blob);
     shot.src = next;
+    shot.hidden = false;
+    waiting.hidden = true;
     if (imageUrl) URL.revokeObjectURL(imageUrl);
     imageUrl = next;
     code.value = '';
-    status.textContent = 'Connected';
+    report('Connected to your Mac', 'success');
     retry.hidden = true;
     if (!timer) timer = setInterval(refresh, 1200);
   } catch (error) {
+    if (secret !== current) return;
     clearInterval(timer);
     timer = undefined;
     if (error.status === 401 || error.status === 429) {
-      secret = '';
-      session.hidden = true;
-      join.hidden = false;
+      clearSession();
     } else {
       retry.hidden = false;
     }
-    status.textContent = error.message;
+    report(error.message, 'error');
   } finally {
     busy = false;
+    if (secret && secret !== current) refresh();
   }
 }
 
 function send(data) {
-  inputQueue = inputQueue.catch(() => {}).then(() => request('/control', data)).catch(error => {
-    status.textContent = error.message;
+  const current = secret;
+  inputQueue = inputQueue.catch(() => {}).then(() => {
+    if (secret === current) return request('/control', data);
+  }).catch(error => {
+    report(error.message, 'error');
   });
 }
 
@@ -77,25 +107,18 @@ function position(event) {
 
 connect.addEventListener('click', () => {
   secret = code.value.trim();
-  if (!secret) { status.textContent = 'Enter the session code'; return; }
+  if (!/^\d{6}$/.test(secret)) { report('Enter the six-digit session code', 'error'); return; }
   join.hidden = true;
   session.hidden = false;
+  report('Connecting to your Mac…');
   refresh();
 });
 code.addEventListener('keydown', event => { if (event.key === 'Enter') connect.click(); });
 retry.addEventListener('click', refresh);
 
 disconnect.addEventListener('click', () => {
-  clearInterval(timer);
-  timer = undefined;
-  secret = '';
-  session.hidden = true;
-  join.hidden = false;
-  status.textContent = 'Disconnected';
-  if (imageUrl) URL.revokeObjectURL(imageUrl);
-  imageUrl = undefined;
-  shot.removeAttribute('src');
-  retry.hidden = true;
+  clearSession();
+  report('Disconnected');
 });
 
 shot.addEventListener('pointerdown', event => {

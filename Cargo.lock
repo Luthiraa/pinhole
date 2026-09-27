@@ -654,6 +654,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
+name = "pinhole"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "axum-server",
+ "pem",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2",
+ "subtle",
+ "time",
+ "tokio",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -766,23 +783,6 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
-
-[[package]]
-name = "screenlink"
-version = "0.1.0"
-dependencies = [
- "axum",
- "axum-server",
- "pem",
- "rcgen",
- "rustls",
- "serde",
- "serde_json",
- "sha2",
- "subtle",
- "time",
- "tokio",
-]
 
 [[package]]
 name = "serde"

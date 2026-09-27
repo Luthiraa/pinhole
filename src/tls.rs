@@ -53,7 +53,7 @@ fn identity(dir: &Path, ip: IpAddr) -> Result<Identity> {
     params.not_after = now + Duration::days(365);
     params
         .distinguished_name
-        .push(DnType::CommonName, "Screenlink");
+        .push(DnType::CommonName, "Pinhole");
     params
         .extended_key_usages
         .push(ExtendedKeyUsagePurpose::ServerAuth);
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn keeps_identity_for_same_ip() {
-        let dir = std::env::temp_dir().join(format!("screenlink-tls-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("pinhole-tls-test-{}", std::process::id()));
         fs::create_dir(&dir).unwrap();
         let ip = "127.0.0.1".parse().unwrap();
         let first = identity(&dir, ip).unwrap();

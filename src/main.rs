@@ -176,7 +176,7 @@ async fn run(app_bundle: bool) -> Result<()> {
         [] => SocketAddr::new(auto_ip()?, PORT),
         [host, ip] if host == "host" => SocketAddr::new(ip.parse()?, PORT),
         [host, ip, port] if host == "host" => SocketAddr::new(ip.parse()?, port.parse()?),
-        _ => return Err("usage: screenlink [host <mac-lan-ip> [port]]".into()),
+        _ => return Err("usage: pinhole [host <mac-lan-ip> [port]]".into()),
     };
     if !matches!(address.ip(), IpAddr::V4(ip) if ip.is_private() || ip.is_loopback())
         || address.port() == 0
@@ -200,19 +200,19 @@ fn auto_ip() -> Result<IpAddr> {
             }
         }
     }
-    Err("no private LAN address found; run screenlink host <mac-lan-ip>".into())
+    Err("no private LAN address found; run pinhole host <mac-lan-ip>".into())
 }
 
 #[cfg(target_os = "macos")]
 async fn host(address: SocketAddr, app_bundle: bool) -> Result<()> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
-    let dir = env::var_os("SCREENLINK_STATE_DIR")
+    let dir = env::var_os("PINHOLE_STATE_DIR")
         .map(PathBuf::from)
-        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".screenlink")))
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".pinhole")))
         .ok_or("HOME is unset")?;
     if dir.exists() && dir.symlink_metadata()?.file_type().is_symlink() {
-        return Err("~/.screenlink must not be a symlink".into());
+        return Err("~/.pinhole must not be a symlink".into());
     }
     fs::DirBuilder::new()
         .recursive(true)
@@ -229,6 +229,7 @@ async fn host(address: SocketAddr, app_bundle: bool) -> Result<()> {
         .route("/", get(page))
         .route("/app.js", get(script))
         .route("/style.css", get(style))
+        .route("/favicon.svg", get(favicon))
         .route("/shot", post(shot))
         .route("/control", post(control))
         .with_state(Arc::new(Shared {
@@ -247,7 +248,7 @@ async fn host(address: SocketAddr, app_bundle: bool) -> Result<()> {
     if !app_bundle {
         println!("Session code: {secret}");
     }
-    println!("Grant Screen Recording and turn on Screenlink in Accessibility settings. Ctrl-C stops sharing.");
+    println!("Grant Screen Recording and turn on Pinhole in Accessibility settings. Ctrl-C stops sharing.");
     if app_bundle {
         let cleanup = dir.clone();
         thread::spawn(move || {
@@ -283,9 +284,7 @@ async fn host(_: SocketAddr, _: bool) -> Result<()> {
 }
 
 fn dialog_path() -> PathBuf {
-    env::current_exe()
-        .unwrap()
-        .with_file_name("screenlink-dialog")
+    env::current_exe().unwrap().with_file_name("pinhole-dialog")
 }
 
 fn app_alert(message: &str) {
@@ -301,7 +300,7 @@ async fn page() -> Response {
         "text/html; charset=utf-8",
     );
     response.headers_mut().insert(header::CONTENT_SECURITY_POLICY,
-        "default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'".parse().unwrap());
+        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'".parse().unwrap());
     response
 }
 
@@ -318,6 +317,14 @@ async fn style() -> Response {
         StatusCode::OK,
         include_bytes!("style.css").to_vec(),
         "text/css; charset=utf-8",
+    )
+}
+
+async fn favicon() -> Response {
+    reply(
+        StatusCode::OK,
+        include_bytes!("pinhole.svg").to_vec(),
+        "image/svg+xml",
     )
 }
 
@@ -373,7 +380,10 @@ async fn shot(State(state): State<Arc<Shared>>, headers: HeaderMap) -> Response 
         Ok(Ok(png)) => reply(StatusCode::OK, png, "image/png"),
         failure => {
             eprintln!("capture failed: {failure:?}");
-            error(StatusCode::INTERNAL_SERVER_ERROR, "Screen capture failed. Check Screen Recording permission for Screenlink, then retry")
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Screen capture failed. Check Screen Recording permission for Pinhole, then retry",
+            )
         }
     }
 }
@@ -397,7 +407,7 @@ async fn control(State(state): State<Arc<Shared>>, headers: HeaderMap, body: Bod
         if !mac::input_allowed() {
             return error(
                 StatusCode::FORBIDDEN,
-                "Turn on Screenlink in Mac System Settings > Privacy & Security > Accessibility, then retry",
+                "Turn on Pinhole in Mac System Settings > Privacy & Security > Accessibility, then retry",
             );
         }
         if let Err(message) = mac::apply(action) {

@@ -7,7 +7,7 @@ let arguments = CommandLine.arguments
 
 if arguments.dropFirst().first == "error" {
     let alert = NSAlert()
-    alert.messageText = "Screenlink could not start"
+    alert.messageText = "Pinhole could not start"
     alert.informativeText = arguments.dropFirst(2).first ?? ""
     alert.addButton(withTitle: "OK")
     app.activate(ignoringOtherApps: true)
@@ -21,7 +21,6 @@ if arguments.dropFirst().first == "error" {
 
     final class Controls: NSObject, NSWindowDelegate {
         let address: String
-        var window: NSWindow?
         init(address: String) { self.address = address }
         @objc func copyAddress(_ sender: Any?) {
             NSPasteboard.general.clearContents()
@@ -38,60 +37,138 @@ if arguments.dropFirst().first == "error" {
         func windowWillClose(_ notification: Notification) { NSApp.terminate(nil) }
     }
 
+    final class MarkView: NSView {
+        override func draw(_ dirtyRect: NSRect) {
+            NSColor.labelColor.setFill()
+            NSBezierPath(roundedRect: bounds, xRadius: 9, yRadius: 9).fill()
+            let outer = NSRect(x: bounds.midX - 8, y: bounds.midY - 8, width: 16, height: 16)
+            NSColor.windowBackgroundColor.setFill()
+            NSBezierPath(ovalIn: outer).fill()
+            let inner = NSRect(x: bounds.midX - 3, y: bounds.midY - 3, width: 6, height: 6)
+            NSColor.labelColor.setFill()
+            NSBezierPath(ovalIn: inner).fill()
+        }
+    }
+
+    func text(_ value: String, size: CGFloat = 13, weight: NSFont.Weight = .regular,
+              color: NSColor = .labelColor, mono: Bool = false) -> NSTextField {
+        let field = NSTextField(labelWithString: value)
+        field.font = mono ? .monospacedSystemFont(ofSize: size, weight: weight) : .systemFont(ofSize: size, weight: weight)
+        field.textColor = color
+        field.isSelectable = true
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        return field
+    }
+
+    func stack(_ views: [NSView], spacing: CGFloat = 8, vertical: Bool = true) -> NSStackView {
+        let result = NSStackView(views: views)
+        result.orientation = vertical ? .vertical : .horizontal
+        result.alignment = vertical ? .leading : .centerY
+        result.spacing = spacing
+        return result
+    }
+
+    func card(_ content: NSView) -> NSView {
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
+        view.layer?.borderColor = NSColor.separatorColor.cgColor
+        view.layer?.borderWidth = 1
+        view.layer?.cornerRadius = 10
+        view.addSubview(content)
+        content.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            content.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            content.topAnchor.constraint(equalTo: view.topAnchor, constant: 14),
+            content.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -14)
+        ])
+        return view
+    }
+
+    func button(_ title: String, _ action: Selector, controls: Controls) -> NSButton {
+        let result = NSButton(title: title, target: controls, action: action)
+        result.bezelStyle = .rounded
+        result.controlSize = .large
+        result.font = .systemFont(ofSize: 13, weight: .medium)
+        return result
+    }
+
     let controls = Controls(address: address)
     let window = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 520, height: 320),
+        contentRect: NSRect(x: 0, y: 0, width: 600, height: 510),
         styleMask: [.titled, .closable, .miniaturizable],
         backing: .buffered,
         defer: false
     )
-    window.title = "Screenlink"
+    window.title = "Pinhole"
+    window.titleVisibility = .hidden
     window.center()
     window.isReleasedWhenClosed = false
     window.delegate = controls
-    controls.window = window
 
-    func label(_ text: String, font: NSFont? = nil) -> NSTextField {
-        let field = NSTextField(labelWithString: text)
-        field.isSelectable = true
-        if let font { field.font = font }
-        return field
-    }
-    func button(_ title: String, _ action: Selector) -> NSButton {
-        NSButton(title: title, target: controls, action: action)
-    }
+    let mark = MarkView(frame: NSRect(x: 0, y: 0, width: 34, height: 34))
+    mark.widthAnchor.constraint(equalToConstant: 34).isActive = true
+    mark.heightAnchor.constraint(equalToConstant: 34).isActive = true
+    let heading = stack([
+        text("Pinhole", size: 22, weight: .semibold),
+        text("Private control for your Mac", size: 12, color: .secondaryLabelColor)
+    ], spacing: 1)
+    let sharing = text("●  SHARING", size: 10, weight: .semibold, color: .systemGreen)
+    let spacer = NSView()
+    spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    let header = stack([mark, heading, spacer, sharing], spacing: 12, vertical: false)
 
-    let stack = NSStackView()
-    stack.orientation = .vertical
-    stack.alignment = .leading
-    stack.spacing = 12
-    stack.addArrangedSubview(label("Open this address on your other device:", font: .boldSystemFont(ofSize: 14)))
-    stack.addArrangedSubview(label(address, font: .monospacedSystemFont(ofSize: 15, weight: .regular)))
-    stack.addArrangedSubview(label("Session code: \(code)", font: .monospacedDigitSystemFont(ofSize: 20, weight: .semibold)))
-    stack.addArrangedSubview(label("Keep this window open while sharing. Closing it stops Screenlink."))
-    stack.addArrangedSubview(label("For remote control, turn on Screenlink in Accessibility settings."))
-    stack.addArrangedSubview(label("TLS certificate SHA-256 (compare with the browser warning):"))
-    stack.addArrangedSubview(label(fingerprint, font: .monospacedSystemFont(ofSize: 10, weight: .regular)))
+    let copy = button("Copy address", #selector(Controls.copyAddress(_:)), controls: controls)
+    let addressField = text(address, size: 15, weight: .medium, mono: true)
+    addressField.lineBreakMode = .byTruncatingMiddle
+    let addressRow = stack([addressField, copy], spacing: 12, vertical: false)
+    let details = card(stack([
+        text("OPEN ON YOUR OTHER DEVICE", size: 10, weight: .semibold, color: .secondaryLabelColor),
+        addressRow,
+        text("SESSION CODE", size: 10, weight: .semibold, color: .secondaryLabelColor),
+        text(code, size: 29, weight: .semibold, mono: true)
+    ], spacing: 9))
 
-    let actions = NSStackView(views: [
-        button("Copy address", #selector(Controls.copyAddress(_:))),
-        button("Allow Screen Recording", #selector(Controls.allowRecording(_:))),
-        button("Allow Remote Control", #selector(Controls.allowControl(_:)))
-    ])
-    actions.orientation = .horizontal
-    actions.spacing = 8
-    stack.addArrangedSubview(actions)
-    stack.addArrangedSubview(button("Stop Sharing", #selector(Controls.stop(_:))))
+    let permissions = stack([
+        text("Permissions", size: 15, weight: .semibold),
+        text("Allow Pinhole to show and control this Mac.", size: 12, color: .secondaryLabelColor),
+        stack([
+            button("Screen Recording", #selector(Controls.allowRecording(_:)), controls: controls),
+            button("Remote Control", #selector(Controls.allowControl(_:)), controls: controls)
+        ], spacing: 10, vertical: false)
+    ], spacing: 7)
 
+    let certificate = card(stack([
+        text("CERTIFICATE SHA-256", size: 10, weight: .semibold, color: .secondaryLabelColor),
+        text(fingerprint, size: 10, mono: true),
+        text("Compare this with your browser's certificate details before continuing.", size: 11, color: .secondaryLabelColor)
+    ], spacing: 6))
+
+    let stop = button("Stop sharing", #selector(Controls.stop(_:)), controls: controls)
+    stop.bezelColor = .labelColor
+    stop.contentTintColor = .windowBackgroundColor
+    let footerSpacer = NSView()
+    footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    let footer = stack([
+        text("Closing this window ends the session.", size: 12, color: .secondaryLabelColor),
+        footerSpacer, stop
+    ], spacing: 10, vertical: false)
+
+    let root = stack([header, details, permissions, certificate, footer], spacing: 20)
     let content = NSView()
     window.contentView = content
-    content.addSubview(stack)
-    stack.translatesAutoresizingMaskIntoConstraints = false
+    content.addSubview(root)
+    root.translatesAutoresizingMaskIntoConstraints = false
     NSLayoutConstraint.activate([
-        stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
-        stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -24),
-        stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
-        stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24)
+        root.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 26),
+        root.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -26),
+        root.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
+        root.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -24),
+        header.widthAnchor.constraint(equalTo: root.widthAnchor),
+        details.widthAnchor.constraint(equalTo: root.widthAnchor),
+        certificate.widthAnchor.constraint(equalTo: root.widthAnchor),
+        footer.widthAnchor.constraint(equalTo: root.widthAnchor)
     ])
     window.makeKeyAndOrderFront(nil)
     app.activate(ignoringOtherApps: true)
