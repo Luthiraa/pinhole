@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="assets/pinhole-readme.png" alt="A Mac screen sending pixels through a pinhole to a phone" width="560">
-</p>
+<img width="115" height="86.4" style="margin-bottom: -10px" alt="Pinhole pixel art" src="assets/pinhole-readme.png" />
 
 # Pinhole
 
@@ -29,4 +27,4 @@ Run `cargo test --locked`, `cargo fmt --check`, `node --check src/app.js`, and `
 
 Ad hoc rebuilds may prompt for permissions again. Set `PINHOLE_SIGN_IDENTITY` to use a stable Apple signing identity.
 
-[MIT license](LICENSE).
+Copyright © 2026 Luthiraa. Licensed under the [GNU General Public License v3.0](LICENSE).
