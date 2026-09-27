@@ -1,10 +1,14 @@
 name: CI
 on: [push, pull_request]
+permissions:
+  contents: read
 jobs:
   macos:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
       - run: cargo +stable fmt --check
       - run: cargo +stable clippy --locked --all-targets -- -D warnings
