@@ -2,7 +2,7 @@
 
 # Pinhole
 
-View and control your Mac from a phone browser on the same Wi-Fi. No account or relay.
+View and control your Mac from a browser on the same Wi-Fi. No account or relay.
 
 ## Setup
 
