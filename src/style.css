@@ -1,0 +1,13 @@
+:root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+body { margin: 0; }
+main { max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+h1 { margin-bottom: .25rem; }
+label { display: block; font-weight: 600; margin: 1rem 0 .4rem; }
+input, button { box-sizing: border-box; font: inherit; padding: .7rem .9rem; border-radius: .5rem; }
+input { width: 100%; border: 1px solid #999; }
+button { display: inline-block; margin-top: .8rem; color: white; background: #175cd3; border: 0; cursor: pointer; }
+#status { min-height: 1.5rem; }
+#session[hidden], #join[hidden], #retry[hidden] { display: none; }
+#shot { display: block; width: 100%; height: auto; border: 1px solid #888; border-radius: .5rem; touch-action: none; user-select: none; }
+#typing { max-width: 350px; }
+#disconnect { background: #555; }
