@@ -4,6 +4,10 @@ version = "0.3.0"
 edition = "2021"
 license = "GPL-3.0-only"
 
+[[bin]]
+name = "pinhole"
+path = "src/host/main.rs"
+
 [dependencies]
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"] }
 axum-server = { version = "0.8", features = ["tls-rustls"] }

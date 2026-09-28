@@ -5,7 +5,7 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 
-const bundledApp = path.resolve(__dirname, '../Pinhole.app');
+const bundledApp = path.resolve(__dirname, '../../Pinhole.app');
 const executable = 'Contents/MacOS/pinhole';
 const bundledBinary = path.join(bundledApp, executable);
 const args = process.argv.slice(2);

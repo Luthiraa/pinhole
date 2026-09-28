@@ -372,7 +372,7 @@ async fn host(
 async fn page() -> Response {
     let mut response = reply(
         StatusCode::OK,
-        include_str!("page.html"),
+        include_str!("../client/page.html"),
         "text/html; charset=utf-8",
     );
     response.headers_mut().insert(header::CONTENT_SECURITY_POLICY,
@@ -383,7 +383,7 @@ async fn page() -> Response {
 async fn script() -> Response {
     reply(
         StatusCode::OK,
-        include_str!("app.js"),
+        include_str!("../client/app.js"),
         "text/javascript; charset=utf-8",
     )
 }
@@ -391,13 +391,17 @@ async fn script() -> Response {
 async fn style() -> Response {
     reply(
         StatusCode::OK,
-        include_str!("style.css"),
+        include_str!("../client/style.css"),
         "text/css; charset=utf-8",
     )
 }
 
 async fn favicon() -> Response {
-    reply(StatusCode::OK, include_str!("pinhole.svg"), "image/svg+xml")
+    reply(
+        StatusCode::OK,
+        include_str!("../client/pinhole.svg"),
+        "image/svg+xml",
+    )
 }
 
 fn authorization(state: &Shared, headers: &HeaderMap) -> StatusCode {

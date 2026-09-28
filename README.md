@@ -30,9 +30,9 @@ Pinhole connects directly over HTTPS on your local network. Its locally generate
 
 ## Develop
 
-`src` contains the Rust host, browser UI, and background service. `src/cli.js` is the npm CLI launcher.
+`src/client` contains the browser UI. `src/host` contains the Rust host, npm CLI launcher, background service, and build script.
 
-Check the source with `cargo check --locked`, `cargo fmt --check`, `node --check src/app.js`, `node --check src/service.js`, and `node --check src/cli.js`.
+Check the source with `cargo check --locked`, `cargo fmt --check`, `node --check src/client/app.js`, `node --check src/host/service.js`, and `node --check src/host/cli.js`.
 
 Ad hoc rebuilds may prompt for permissions again. Set `PINHOLE_SIGN_IDENTITY` to use a stable Apple signing identity.
 

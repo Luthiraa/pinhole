@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 if [ "$(uname -s)" != Darwin ]; then
     echo 'Build the macOS package on a Mac.' >&2
     exit 1
