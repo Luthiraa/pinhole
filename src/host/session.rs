@@ -10,6 +10,8 @@ use std::{
 pub struct Start {
     pub args: Vec<String>,
     pub state_dir: Option<PathBuf>,
+    #[serde(default)]
+    pub background: bool,
 }
 
 extern "C" {

@@ -7,6 +7,13 @@ const path = require('node:path');
 
 const bundledApp = path.resolve(__dirname, '../Pinhole.app');
 const args = process.argv.slice(2);
+if (['start', 'status', 'stop'].includes(args[0])) {
+  require('../src/host/service')(args).catch(error => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
+  return;
+}
 if (args.length === 1 && ['--help', '-h', '--version', '-V'].includes(args[0])) {
   const result = spawnSync(path.join(bundledApp, 'Contents/MacOS/pinhole'), args, { stdio: 'inherit' });
   if (result.error) console.error(result.error.message);
@@ -33,6 +40,7 @@ fs.chmodSync(dir, 0o700);
 fs.writeFileSync(path.join(dir, 'start.json'), JSON.stringify({
   args,
   state_dir: process.env.PINHOLE_STATE_DIR || null,
+  background: process.env.PINHOLE_BACKGROUND === '1',
 }), { mode: 0o600 });
 let connection;
 let stopped = false;

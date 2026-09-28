@@ -41,6 +41,9 @@ Usage: pinhole [command]
 
   pinhole                       Start sharing on your local network
   pinhole host <ip> [port]       Choose a local address (default port: 48731)
+  pinhole start [ip] [port]      Start a manual background host
+  pinhole status                Show background host status and connection code
+  pinhole stop                  Stop the background host
   pinhole permissions           Request Screen Recording and Accessibility
   pinhole --version             Print the version
   pinhole --help                Show this help
@@ -202,7 +205,9 @@ async fn run() -> Result<()> {
                 permissions(connection, dir).await
             } else {
                 match host_address(&start.args) {
-                    Ok(address) => host(address, start.state_dir, connection).await,
+                    Ok(address) => {
+                        host(address, start.state_dir, connection, start.background).await
+                    }
                     Err(error) => Err(error),
                 }
             };
@@ -297,6 +302,7 @@ async fn host(
     address: SocketAddr,
     state_dir: Option<PathBuf>,
     mut connection: tokio::net::UnixStream,
+    background: bool,
 ) -> Result<()> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
@@ -342,9 +348,13 @@ async fn host(
     println!("Certificate SHA-256: {fingerprint}");
     println!("Compare this fingerprint before accepting the browser's certificate warning.");
     if !mac::capture_allowed() || !mac::input_allowed() {
-        println!("\nPermissions are missing. Press Ctrl-C, run pinhole permissions, then start pinhole again.");
+        println!("\nPermissions are missing. Stop sharing, run pinhole permissions, then start pinhole again.");
     }
-    println!("\nKeep this terminal open. Ctrl-C stops sharing.");
+    if background {
+        println!("\nBackground host ready. Run pinhole stop to stop sharing.");
+    } else {
+        println!("\nKeep this terminal open. Ctrl-C stops sharing.");
+    }
     let handle = axum_server::Handle::new();
     let shutdown = handle.clone();
     let stop = tokio::spawn(async move {
