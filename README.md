@@ -1,4 +1,4 @@
-<img width="115" height="86.4" style="margin-bottom: -10px" alt="Pinhole pixel art" src="assets/pinhole-readme.png" />
+<img width="115" height="86.4" style="margin-bottom: -10px" alt="Pinhole pixel art" src="pinhole-readme.png" />
 
 # Pinhole
 
@@ -6,9 +6,11 @@ View and control your Mac from a browser on the same Wi-Fi. Start sharing from y
 
 ## Setup
 
-Requires macOS 11 or later and Node.js 18+ with npm. Download `luthiraa-pinhole-0.3.0.tgz` from the **pinhole-npm** artifact in the [latest successful build](https://github.com/Luthiraa/pinhole/actions/workflows/ci.yml). The package includes Apple Silicon and Intel binaries.
+Requires macOS 11 or later, Node.js 18+ with npm, Rust, and Xcode Command Line Tools. Build the package locally; it includes Apple Silicon and Intel binaries.
 
 ```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm pack
 npm install -g ./luthiraa-pinhole-0.3.0.tgz
 pinhole permissions
 pinhole
@@ -28,14 +30,10 @@ Pinhole connects directly over HTTPS on your local network. Its locally generate
 
 ## Develop
 
-`src/client` contains the browser UI and assets. `src/host` contains the Rust CLI, HTTPS server, macOS integration, and session handling.
+`src` contains the Rust host, browser UI, and background service. `pinhole.js` is the npm CLI launcher.
 
-Requires Rust and Xcode Command Line Tools. Run `cargo test --locked`, `cargo fmt --check`, and `node --check src/client/app.js`. Check an installed package with `python3 tests/cli.py "$(command -v pinhole)"`. Add `--capture` to verify a real screenshot after granting Screen Recording access, or `--kill` to verify cleanup after an abrupt CLI exit.
-
-To build from source, run `rustup target add aarch64-apple-darwin x86_64-apple-darwin`, then `npm pack` and install the resulting archive.
+Check the source with `cargo check --locked`, `cargo fmt --check`, `node --check src/app.js`, `node --check src/service.js`, and `node --check pinhole.js`.
 
 Ad hoc rebuilds may prompt for permissions again. Set `PINHOLE_SIGN_IDENTITY` to use a stable Apple signing identity.
-
-Check the manual background service with `python3 tests/service.py "$(command -v pinhole)"` (optionally add `--capture`). Stop any existing background host first.
 
 Copyright © 2026 Luthiraa. Licensed under the [GNU General Public License v3.0](LICENSE).

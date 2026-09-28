@@ -5,10 +5,10 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 
-const bundledApp = path.resolve(__dirname, '../Pinhole.app');
+const bundledApp = path.join(__dirname, 'Pinhole.app');
 const args = process.argv.slice(2);
 if (['start', 'status', 'stop'].includes(args[0])) {
-  require('../src/host/service')(args).catch(error => {
+  require('./src/service')(args).catch(error => {
     console.error(error.message);
     process.exitCode = 1;
   });

@@ -2,3 +2,4 @@ target/
 dist/
 Pinhole.app/
 node_modules/
+*.tgz

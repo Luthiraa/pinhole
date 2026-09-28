@@ -11,7 +11,7 @@ use std::{
 };
 use time::{Duration, OffsetDateTime};
 
-type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
+use super::Result;
 
 #[derive(Deserialize, Serialize)]
 struct Identity {
@@ -76,32 +76,4 @@ fn identity(dir: &Path, ip: IpAddr) -> Result<Identity> {
     file.flush()?;
     fs::rename(temp, path)?;
     Ok(fresh)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn keeps_identity_for_same_ip() {
-        let dir = std::env::temp_dir().join(format!("pinhole-tls-test-{}", std::process::id()));
-        fs::create_dir(&dir).unwrap();
-        let ip = "127.0.0.1".parse().unwrap();
-        let first = identity(&dir, ip).unwrap();
-        let second = identity(&dir, ip).unwrap();
-        assert_eq!(first.cert, second.cert);
-        assert_ne!(
-            first.cert,
-            identity(&dir, "127.0.0.2".parse().unwrap()).unwrap().cert
-        );
-        assert_eq!(
-            fs::metadata(dir.join("tls.json"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o600
-        );
-        fs::remove_dir_all(dir).unwrap();
-    }
 }

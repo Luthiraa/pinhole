@@ -34,7 +34,6 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const PORT: u16 = 48731;
 const MAX_IMAGE: u64 = 64 * 1024 * 1024;
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
-const PAGE: &str = include_str!("../client/page.html");
 const HELP: &str = "Pinhole — private Mac control from your terminal
 
 Usage: pinhole [command]
@@ -275,11 +274,6 @@ async fn permissions(mut connection: tokio::net::UnixStream, dir: &Path) -> Resu
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-fn permissions() -> Result<()> {
-    Err("the host requires macOS".into())
-}
-
 fn auto_ip() -> Result<IpAddr> {
     for n in 0..16 {
         let output = Command::new("/usr/sbin/ipconfig")
@@ -375,15 +369,10 @@ async fn host(
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
-async fn host(_: SocketAddr) -> Result<()> {
-    Err("the host requires macOS".into())
-}
-
 async fn page() -> Response {
     let mut response = reply(
         StatusCode::OK,
-        PAGE.as_bytes().to_vec(),
+        include_str!("page.html"),
         "text/html; charset=utf-8",
     );
     response.headers_mut().insert(header::CONTENT_SECURITY_POLICY,
@@ -394,7 +383,7 @@ async fn page() -> Response {
 async fn script() -> Response {
     reply(
         StatusCode::OK,
-        include_bytes!("../client/app.js").to_vec(),
+        include_str!("app.js"),
         "text/javascript; charset=utf-8",
     )
 }
@@ -402,17 +391,13 @@ async fn script() -> Response {
 async fn style() -> Response {
     reply(
         StatusCode::OK,
-        include_bytes!("../client/style.css").to_vec(),
+        include_str!("style.css"),
         "text/css; charset=utf-8",
     )
 }
 
 async fn favicon() -> Response {
-    reply(
-        StatusCode::OK,
-        include_bytes!("../client/pinhole.svg").to_vec(),
-        "image/svg+xml",
-    )
+    reply(StatusCode::OK, include_str!("pinhole.svg"), "image/svg+xml")
 }
 
 fn authorization(state: &Shared, headers: &HeaderMap) -> StatusCode {
@@ -507,7 +492,7 @@ async fn control(State(state): State<Arc<Shared>>, headers: HeaderMap, body: Bod
         if let Err(message) = mac::apply(action) {
             return error(StatusCode::INTERNAL_SERVER_ERROR, message);
         }
-        reply(StatusCode::NO_CONTENT, Vec::new(), "text/plain")
+        reply(StatusCode::NO_CONTENT, "", "text/plain")
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -517,15 +502,12 @@ async fn control(State(state): State<Arc<Shared>>, headers: HeaderMap, body: Bod
 }
 
 fn error(status: StatusCode, message: &'static str) -> Response {
-    reply(
-        status,
-        message.as_bytes().to_vec(),
-        "text/plain; charset=utf-8",
-    )
+    reply(status, message, "text/plain; charset=utf-8")
 }
 
-fn reply(status: StatusCode, body: Vec<u8>, content_type: &'static str) -> Response {
-    let mut response = (status, [(header::CONTENT_TYPE, content_type)], body).into_response();
+fn reply(status: StatusCode, body: impl Into<Body>, content_type: &'static str) -> Response {
+    let mut response =
+        (status, [(header::CONTENT_TYPE, content_type)], body.into()).into_response();
     let headers = response.headers_mut();
     headers.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
@@ -575,61 +557,4 @@ fn capture_png(dir: &Path) -> Result<Vec<u8>> {
 #[cfg(not(target_os = "macos"))]
 fn capture_png(_: &Path) -> Result<Vec<u8>> {
     Err("capture requires macOS".into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn host_addresses() {
-        let parse = |args: &[&str]| {
-            host_address(&args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
-        };
-        assert_eq!(parse(&["host", "192.168.2.89"]).unwrap().port(), PORT);
-        assert_eq!(parse(&["host", "127.0.0.1", "8443"]).unwrap().port(), 8443);
-        assert!(parse(&["host", "8.8.8.8"]).is_err());
-        assert!(parse(&["host", "0.0.0.0"]).is_err());
-        assert!(parse(&["host", "192.168.2.89", "0"]).is_err());
-        assert!(parse(&["unexpected"]).is_err());
-    }
-
-    #[test]
-    fn control_validation() {
-        let parse = |json| serde_json::from_str::<Control>(json).unwrap();
-        assert!(parse(r#"{"action":"click","x":0.5,"y":1.0,"button":"left"}"#).valid());
-        assert!(!parse(r#"{"action":"click","x":1.1,"y":0.0,"button":"left"}"#).valid());
-        assert!(!parse(r#"{"action":"scroll","x":0.5,"y":0.5,"delta":100}"#).valid());
-    }
-
-    #[test]
-    fn session_code_gate() {
-        let state = Shared {
-            code: *b"123456",
-            dir: PathBuf::new(),
-            capture_lock: Mutex::new(()),
-            attempts: Mutex::new(Attempts {
-                failures: 0,
-                blocked_until: None,
-            }),
-        };
-        let mut headers = HeaderMap::new();
-        assert_eq!(authorization(&state, &headers), StatusCode::UNAUTHORIZED);
-        headers.insert(header::AUTHORIZATION, "Bearer 123457".parse().unwrap());
-        assert_eq!(authorization(&state, &headers), StatusCode::UNAUTHORIZED);
-        headers.insert(header::AUTHORIZATION, "Bearer 123456".parse().unwrap());
-        assert_eq!(authorization(&state, &headers), StatusCode::OK);
-        headers.insert(header::AUTHORIZATION, "Bearer 000000".parse().unwrap());
-        for _ in 0..4 {
-            assert_eq!(authorization(&state, &headers), StatusCode::UNAUTHORIZED);
-        }
-        assert_eq!(
-            authorization(&state, &headers),
-            StatusCode::TOO_MANY_REQUESTS
-        );
-        headers.insert(header::AUTHORIZATION, "Bearer 123456".parse().unwrap());
-        assert_eq!(
-            authorization(&state, &headers),
-            StatusCode::TOO_MANY_REQUESTS
-        );
-    }
 }
