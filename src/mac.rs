@@ -20,7 +20,10 @@ struct Rect {
 
 #[link(name = "CoreGraphics", kind = "framework")]
 extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
     fn CGPreflightPostEventAccess() -> bool;
+    fn CGRequestPostEventAccess() -> bool;
     fn CGMainDisplayID() -> u32;
     fn CGDisplayBounds(display: u32) -> Rect;
     fn CGEventCreateMouseEvent(
@@ -69,6 +72,19 @@ impl Drop for Event {
 
 pub fn input_allowed() -> bool {
     unsafe { CGPreflightPostEventAccess() }
+}
+
+pub fn capture_allowed() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+pub fn request_permissions() -> (bool, bool) {
+    unsafe {
+        (
+            CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess(),
+            CGPreflightPostEventAccess() || CGRequestPostEventAccess(),
+        )
+    }
 }
 
 fn point(x: f64, y: f64) -> Point {

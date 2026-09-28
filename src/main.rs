@@ -11,10 +11,10 @@ use std::{
     env,
     error::Error,
     fs::{self, File},
-    io::{self, Read, Write},
+    io::{self, Read},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -31,6 +31,18 @@ const PORT: u16 = 48731;
 const MAX_IMAGE: u64 = 64 * 1024 * 1024;
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 const PAGE: &str = include_str!("page.html");
+const HELP: &str = "Pinhole — private Mac control from your terminal
+
+Usage: pinhole [command]
+
+  pinhole                       Start sharing on your local network
+  pinhole host <ip> [port]       Choose a local address (default port: 48731)
+  pinhole permissions           Request Screen Recording and Accessibility
+  pinhole --version             Print the version
+  pinhole --help                Show this help
+
+Open the HTTPS address on your phone and enter the session code.
+Keep this terminal open. Ctrl-C stops sharing.";
 
 struct Shared {
     code: [u8; 6],
@@ -155,35 +167,76 @@ fn mac_key(code: &str) -> Option<u16> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let app_bundle = env::current_exe()?
-        .to_string_lossy()
-        .contains(".app/Contents/MacOS/");
-    let result = run(app_bundle).await;
-    if app_bundle {
-        if let Err(error) = &result {
-            app_alert(&error.to_string());
+    let args: Vec<String> = env::args().skip(1).collect();
+    if let [command] = args.as_slice() {
+        match command.as_str() {
+            "--help" | "-h" => {
+                println!("{HELP}");
+                return Ok(());
+            }
+            "--version" | "-V" => {
+                println!("pinhole {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            "permissions" => return permissions(),
+            _ => {}
         }
     }
-    result
+    host(host_address(&args)?).await
 }
 
-async fn run(app_bundle: bool) -> Result<()> {
-    let args: Vec<String> = env::args()
-        .skip(1)
-        .filter(|arg| !app_bundle || !arg.starts_with("-psn_"))
-        .collect();
-    let address = match args.as_slice() {
+fn host_address(args: &[String]) -> Result<SocketAddr> {
+    let address = match args {
         [] => SocketAddr::new(auto_ip()?, PORT),
         [host, ip] if host == "host" => SocketAddr::new(ip.parse()?, PORT),
         [host, ip, port] if host == "host" => SocketAddr::new(ip.parse()?, port.parse()?),
-        _ => return Err("usage: pinhole [host <mac-lan-ip> [port]]".into()),
+        _ => return Err("invalid command; run pinhole --help".into()),
     };
     if !matches!(address.ip(), IpAddr::V4(ip) if ip.is_private() || ip.is_loopback())
         || address.port() == 0
     {
         return Err("use a private IPv4 address and a nonzero port".into());
     }
-    host(address, app_bundle).await
+    Ok(address)
+}
+
+#[cfg(target_os = "macos")]
+fn permissions() -> Result<()> {
+    let (screen, control) = mac::request_permissions();
+    println!(
+        "Screen Recording: {}",
+        if screen { "allowed" } else { "not yet allowed" }
+    );
+    println!(
+        "Accessibility: {}",
+        if control {
+            "allowed"
+        } else {
+            "not yet allowed"
+        }
+    );
+    if !screen || !control {
+        println!(
+            "Enable your terminal (or Pinhole, if listed) in System Settings > Privacy & Security."
+        );
+        println!("Then restart your terminal if macOS asks and run pinhole.");
+        let pane = if !screen {
+            "ScreenCapture"
+        } else {
+            "Accessibility"
+        };
+        Command::new("/usr/bin/open")
+            .arg(format!(
+                "x-apple.systempreferences:com.apple.preference.security?Privacy_{pane}"
+            ))
+            .status()?;
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn permissions() -> Result<()> {
+    Err("the host requires macOS".into())
 }
 
 fn auto_ip() -> Result<IpAddr> {
@@ -204,7 +257,7 @@ fn auto_ip() -> Result<IpAddr> {
 }
 
 #[cfg(target_os = "macos")]
-async fn host(address: SocketAddr, app_bundle: bool) -> Result<()> {
+async fn host(address: SocketAddr) -> Result<()> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
     let dir = env::var_os("PINHOLE_STATE_DIR")
@@ -242,55 +295,38 @@ async fn host(address: SocketAddr, app_bundle: bool) -> Result<()> {
             }),
         }));
     let listener = std::net::TcpListener::bind(address)?;
+    listener.set_nonblocking(true)?;
     let url = format!("https://{address}/");
-    println!("Open {url} on a device on the same LAN");
-    println!("TLS certificate SHA-256: {fingerprint}");
-    if !app_bundle {
-        println!("Session code: {secret}");
+    println!("Pinhole {}\n", env!("CARGO_PKG_VERSION"));
+    println!("Open  {url}");
+    println!("Code  {secret}\n");
+    println!("Certificate SHA-256: {fingerprint}");
+    println!("Compare this fingerprint before accepting the browser's certificate warning.");
+    if !mac::capture_allowed() || !mac::input_allowed() {
+        println!("\nPermissions are missing. Press Ctrl-C, run pinhole permissions, then start pinhole again.");
     }
-    println!("Grant Screen Recording and turn on Pinhole in Accessibility settings. Ctrl-C stops sharing.");
-    if app_bundle {
-        let cleanup = dir.clone();
-        thread::spawn(move || {
-            let result = (|| -> Result<()> {
-                let mut dialog = Command::new(dialog_path())
-                    .args(["share", &url])
-                    .stdin(Stdio::piped())
-                    .spawn()?;
-                dialog
-                    .stdin
-                    .take()
-                    .ok_or("dialog input unavailable")?
-                    .write_all(format!("{secret}\n{fingerprint}").as_bytes())?;
-                dialog.wait()?;
-                Ok(())
-            })();
-            if let Err(error) = result {
-                eprintln!("dialog failed: {error}");
-            }
-            let _ = fs::remove_file(cleanup.join("capture.png"));
-            std::process::exit(0);
-        });
-    }
-    axum_server::from_tcp_rustls(listener, tls)?
+    println!("\nKeep this terminal open. Ctrl-C stops sharing.");
+    let handle = axum_server::Handle::new();
+    let shutdown = handle.clone();
+    let stop = tokio::spawn(async move {
+        if tokio::signal::ctrl_c().await.is_ok() {
+            println!("\nStopping sharing…");
+            shutdown.graceful_shutdown(Some(Duration::from_secs(1)));
+        }
+    });
+    let result = axum_server::from_tcp_rustls(listener, tls)?
+        .handle(handle)
         .serve(app.into_make_service())
-        .await?;
+        .await;
+    stop.abort();
+    let _ = fs::remove_file(dir.join("capture.png"));
+    result?;
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-async fn host(_: SocketAddr, _: bool) -> Result<()> {
+async fn host(_: SocketAddr) -> Result<()> {
     Err("the host requires macOS".into())
-}
-
-fn dialog_path() -> PathBuf {
-    env::current_exe().unwrap().with_file_name("pinhole-dialog")
-}
-
-fn app_alert(message: &str) {
-    let _ = Command::new(dialog_path())
-        .args(["error", message])
-        .status();
 }
 
 async fn page() -> Response {
@@ -382,7 +418,7 @@ async fn shot(State(state): State<Arc<Shared>>, headers: HeaderMap) -> Response 
             eprintln!("capture failed: {failure:?}");
             error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Screen capture failed. Check Screen Recording permission for Pinhole, then retry",
+                "Screen capture failed. Check Screen Recording permission for your terminal, then restart pinhole",
             )
         }
     }
@@ -407,7 +443,7 @@ async fn control(State(state): State<Arc<Shared>>, headers: HeaderMap, body: Bod
         if !mac::input_allowed() {
             return error(
                 StatusCode::FORBIDDEN,
-                "Turn on Pinhole in Mac System Settings > Privacy & Security > Accessibility, then retry",
+                "Allow your terminal in Mac System Settings > Privacy & Security > Accessibility, then restart pinhole",
             );
         }
         if let Err(message) = mac::apply(action) {
@@ -486,6 +522,19 @@ fn capture_png(_: &Path) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn host_addresses() {
+        let parse = |args: &[&str]| {
+            host_address(&args.iter().map(|arg| arg.to_string()).collect::<Vec<_>>())
+        };
+        assert_eq!(parse(&["host", "192.168.2.89"]).unwrap().port(), PORT);
+        assert_eq!(parse(&["host", "127.0.0.1", "8443"]).unwrap().port(), 8443);
+        assert!(parse(&["host", "8.8.8.8"]).is_err());
+        assert!(parse(&["host", "0.0.0.0"]).is_err());
+        assert!(parse(&["host", "192.168.2.89", "0"]).is_err());
+        assert!(parse(&["unexpected"]).is_err());
+    }
+
     #[test]
     fn control_validation() {
         let parse = |json| serde_json::from_str::<Control>(json).unwrap();

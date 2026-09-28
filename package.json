@@ -1,0 +1,28 @@
+{
+  "name": "@luthiraa/pinhole",
+  "version": "0.2.0",
+  "description": "Private Mac screen sharing and control from your terminal.",
+  "license": "GPL-3.0-only",
+  "private": true,
+  "os": ["darwin"],
+  "cpu": ["arm64", "x64"],
+  "bin": {
+    "pinhole": "bin/pinhole"
+  },
+  "files": [
+    "bin/pinhole",
+    "src/",
+    "tests/",
+    "Cargo.toml",
+    "Cargo.lock",
+    "build-package.sh",
+    "assets/pinhole-readme.png"
+  ],
+  "scripts": {
+    "prepack": "sh build-package.sh"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Luthiraa/pinhole.git"
+  }
+}

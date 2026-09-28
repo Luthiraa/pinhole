@@ -1,2 +1,4 @@
 target/
 dist/
+bin/pinhole
+node_modules/
