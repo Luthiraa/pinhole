@@ -5,29 +5,31 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 
-const bundledApp = path.join(__dirname, 'Pinhole.app');
+const bundledApp = path.resolve(__dirname, '../Pinhole.app');
+const executable = 'Contents/MacOS/pinhole';
+const bundledBinary = path.join(bundledApp, executable);
 const args = process.argv.slice(2);
 if (['start', 'status', 'stop'].includes(args[0])) {
-  require('./src/service')(args).catch(error => {
+  require('./service')(args).catch(error => {
     console.error(error.message);
     process.exitCode = 1;
   });
   return;
 }
 if (args.length === 1 && ['--help', '-h', '--version', '-V'].includes(args[0])) {
-  const result = spawnSync(path.join(bundledApp, 'Contents/MacOS/pinhole'), args, { stdio: 'inherit' });
+  const result = spawnSync(bundledBinary, args, { stdio: 'inherit' });
   if (result.error) console.error(result.error.message);
   process.exit(result.status ?? 1);
 }
 
 const app = path.join(os.homedir(), 'Applications/Pinhole.app');
-const executable = 'Contents/MacOS/pinhole';
+const installedBinary = path.join(app, executable);
 if (fs.existsSync(app) && fs.lstatSync(app).isSymbolicLink()) {
   console.error(`Remove the Pinhole.app symlink at ${app} before continuing.`);
   process.exit(1);
 }
-if (!fs.existsSync(path.join(app, executable)) ||
-    !fs.readFileSync(path.join(bundledApp, executable)).equals(fs.readFileSync(path.join(app, executable)))) {
+if (!fs.existsSync(installedBinary) ||
+    !fs.readFileSync(bundledBinary).equals(fs.readFileSync(installedBinary))) {
   fs.mkdirSync(path.dirname(app), { recursive: true });
   fs.cpSync(bundledApp, app, { recursive: true });
 }

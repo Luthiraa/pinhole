@@ -41,7 +41,10 @@ function clearSession() {
 async function request(path, data) {
   const response = await fetch(path, {
     method: 'POST',
-    headers: { Authorization: `Bearer ${secret}`, ...(data ? { 'Content-Type': 'application/json' } : {}) },
+    headers: {
+      Authorization: `Bearer ${secret}`,
+      ...(data ? { 'Content-Type': 'application/json' } : {})
+    },
     body: data ? JSON.stringify(data) : undefined,
     cache: 'no-store'
   });
@@ -107,13 +110,18 @@ function position(event) {
 
 connect.addEventListener('click', () => {
   secret = code.value.trim();
-  if (!/^\d{6}$/.test(secret)) { report('Enter the six-digit session code', 'error'); return; }
+  if (!/^\d{6}$/.test(secret)) {
+    report('Enter the six-digit session code', 'error');
+    return;
+  }
   join.hidden = true;
   session.hidden = false;
   report('Connecting to your Mac…');
   refresh();
 });
-code.addEventListener('keydown', event => { if (event.key === 'Enter') connect.click(); });
+code.addEventListener('keydown', event => {
+  if (event.key === 'Enter') connect.click();
+});
 retry.addEventListener('click', refresh);
 
 disconnect.addEventListener('click', () => {
@@ -149,7 +157,8 @@ shot.addEventListener('touchmove', event => {
   event.preventDefault();
   const next = (event.touches[0].clientY + event.touches[1].clientY) / 2;
   if (Math.abs(next - touchY) >= 12) {
-    send({ action: 'scroll', ...position(event.touches[0]), delta: Math.max(-10, Math.min(10, Math.round((next - touchY) / 12))) });
+    const delta = Math.max(-10, Math.min(10, Math.round((next - touchY) / 12)));
+    send({ action: 'scroll', ...position(event.touches[0]), delta });
     touchY = next;
   }
 }, { passive: false });
@@ -160,7 +169,8 @@ shot.addEventListener('contextmenu', event => {
 });
 shot.addEventListener('wheel', event => {
   event.preventDefault();
-  send({ action: 'scroll', ...position(event), delta: Math.max(-10, Math.min(10, -Math.sign(event.deltaY) * 3)) });
+  const delta = Math.max(-10, Math.min(10, -Math.sign(event.deltaY) * 3));
+  send({ action: 'scroll', ...position(event), delta });
 }, { passive: false });
 
 typing.addEventListener('input', () => {
@@ -175,6 +185,13 @@ document.addEventListener('keydown', event => {
     send({ action: 'text', text: event.key });
   } else {
     event.preventDefault();
-    send({ action: 'key', code: event.code, meta: event.metaKey, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey });
+    send({
+      action: 'key',
+      code: event.code,
+      meta: event.metaKey,
+      ctrl: event.ctrlKey,
+      alt: event.altKey,
+      shift: event.shiftKey
+    });
   }
 });

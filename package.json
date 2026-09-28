@@ -15,16 +15,16 @@
     "node": ">=18"
   },
   "bin": {
-    "pinhole": "pinhole.js"
+    "pinhole": "src/cli.js"
   },
   "files": [
-    "pinhole.js",
+    "src/cli.js",
     "src/service.js",
-    "Pinhole.app/",
-    "pinhole-readme.png"
+    "src/readme.png",
+    "Pinhole.app/"
   ],
   "scripts": {
-    "prepack": "sh build-package.sh"
+    "prepack": "sh src/build.sh"
   },
   "repository": {
     "type": "git",

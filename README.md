@@ -1,4 +1,4 @@
-<img width="115" height="86.4" style="margin-bottom: -10px" alt="Pinhole pixel art" src="pinhole-readme.png" />
+<img width="115" height="86.4" style="margin-bottom: -10px" alt="Pinhole pixel art" src="src/readme.png" />
 
 # Pinhole
 
@@ -30,9 +30,9 @@ Pinhole connects directly over HTTPS on your local network. Its locally generate
 
 ## Develop
 
-`src` contains the Rust host, browser UI, and background service. `pinhole.js` is the npm CLI launcher.
+`src` contains the Rust host, browser UI, and background service. `src/cli.js` is the npm CLI launcher.
 
-Check the source with `cargo check --locked`, `cargo fmt --check`, `node --check src/app.js`, `node --check src/service.js`, and `node --check pinhole.js`.
+Check the source with `cargo check --locked`, `cargo fmt --check`, `node --check src/app.js`, `node --check src/service.js`, and `node --check src/cli.js`.
 
 Ad hoc rebuilds may prompt for permissions again. Set `PINHOLE_SIGN_IDENTITY` to use a stable Apple signing identity.
 
