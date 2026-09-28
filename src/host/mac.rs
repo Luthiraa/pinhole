@@ -22,8 +22,6 @@ struct Rect {
 extern "C" {
     fn CGPreflightScreenCaptureAccess() -> bool;
     fn CGRequestScreenCaptureAccess() -> bool;
-    fn CGPreflightPostEventAccess() -> bool;
-    fn CGRequestPostEventAccess() -> bool;
     fn CGMainDisplayID() -> u32;
     fn CGDisplayBounds(display: u32) -> Rect;
     fn CGEventCreateMouseEvent(
@@ -49,6 +47,74 @@ extern "C" {
 #[link(name = "CoreFoundation", kind = "framework")]
 extern "C" {
     fn CFRelease(object: *const c_void);
+    static kCFBooleanTrue: *const c_void;
+    fn CFDictionaryCreate(
+        allocator: *const c_void,
+        keys: *const *const c_void,
+        values: *const *const c_void,
+        count: isize,
+        key_callbacks: *const c_void,
+        value_callbacks: *const c_void,
+    ) -> *const c_void;
+}
+#[link(name = "ApplicationServices", kind = "framework")]
+extern "C" {
+    fn AXIsProcessTrusted() -> bool;
+    fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
+    static kAXTrustedCheckOptionPrompt: *const c_void;
+}
+#[link(name = "AppKit", kind = "framework")]
+extern "C" {
+    static NSApp: *mut c_void;
+}
+#[link(name = "objc")]
+extern "C" {
+    fn objc_getClass(name: *const std::ffi::c_char) -> *mut c_void;
+    fn sel_registerName(name: *const std::ffi::c_char) -> *mut c_void;
+    fn objc_msgSend();
+}
+#[link(name = "System")]
+extern "C" {
+    static _dispatch_main_q: u8;
+    fn dispatch_async_f(queue: *mut c_void, context: *mut c_void, work: extern "C" fn(*mut c_void));
+    fn dispatch_sync_f(queue: *mut c_void, context: *mut c_void, work: extern "C" fn(*mut c_void));
+}
+
+pub fn run_app() -> super::Result<()> {
+    extern "C" fn start(_: *mut c_void) {
+        thread::spawn(|| {
+            let code = match super::run() {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("Error: {error}");
+                    1
+                }
+            };
+            std::process::exit(code);
+        });
+    }
+    // AppKit owns the main thread; start the CLI session after native app launch.
+    unsafe {
+        let shared: unsafe extern "C" fn(*mut c_void, *mut c_void) -> *mut c_void =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        if shared(
+            objc_getClass(c"NSApplication".as_ptr()),
+            sel_registerName(c"sharedApplication".as_ptr()),
+        )
+        .is_null()
+        {
+            return Err("could not initialize the Pinhole background app".into());
+        }
+        let send: unsafe extern "C" fn(*mut c_void, *mut c_void) =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        dispatch_async_f(
+            ptr::addr_of!(_dispatch_main_q).cast_mut().cast(),
+            ptr::null_mut(),
+            start,
+        );
+        send(NSApp, sel_registerName(c"run".as_ptr()));
+    }
+    Err("Pinhole's native app event loop stopped unexpectedly".into())
 }
 
 struct Event(*mut c_void);
@@ -71,7 +137,7 @@ impl Drop for Event {
 }
 
 pub fn input_allowed() -> bool {
-    unsafe { CGPreflightPostEventAccess() }
+    unsafe { AXIsProcessTrusted() }
 }
 
 pub fn capture_allowed() -> bool {
@@ -79,12 +145,35 @@ pub fn capture_allowed() -> bool {
 }
 
 pub fn request_permissions() -> (bool, bool) {
-    unsafe {
-        (
-            CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess(),
-            CGPreflightPostEventAccess() || CGRequestPostEventAccess(),
-        )
+    extern "C" fn request(context: *mut c_void) {
+        unsafe {
+            let options = CFDictionaryCreate(
+                ptr::null(),
+                &kAXTrustedCheckOptionPrompt,
+                &kCFBooleanTrue,
+                1,
+                ptr::null(),
+                ptr::null(),
+            );
+            let control = !options.is_null() && AXIsProcessTrustedWithOptions(options);
+            if !options.is_null() {
+                CFRelease(options);
+            }
+            *context.cast::<(bool, bool)>() = (
+                CGPreflightScreenCaptureAccess() || CGRequestScreenCaptureAccess(),
+                control,
+            );
+        }
     }
+    let mut result = (false, false);
+    unsafe {
+        dispatch_sync_f(
+            ptr::addr_of!(_dispatch_main_q).cast_mut().cast(),
+            (&mut result as *mut (bool, bool)).cast(),
+            request,
+        );
+    }
+    result
 }
 
 fn point(x: f64, y: f64) -> Point {

@@ -1,4 +1,4 @@
 target/
 dist/
-bin/pinhole
+Pinhole.app/
 node_modules/

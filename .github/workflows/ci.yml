@@ -13,13 +13,15 @@ jobs:
       - run: cargo +stable fmt --check
       - run: cargo +stable clippy --locked --all-targets -- -D warnings
       - run: cargo +stable test --locked
-      - run: node --check src/app.js
+      - run: node --check src/client/app.js
+      - run: node --check bin/pinhole
       - run: mkdir -p dist && npm pack --pack-destination dist
       - run: |
           npm install --global --ignore-scripts --prefix "$RUNNER_TEMP/pinhole" ./dist/*.tgz
           "$RUNNER_TEMP/pinhole/bin/pinhole" --version
           "$RUNNER_TEMP/pinhole/bin/pinhole" --help
           python3 tests/cli.py "$RUNNER_TEMP/pinhole/bin/pinhole"
+          python3 tests/cli.py "$RUNNER_TEMP/pinhole/bin/pinhole" --kill
       - uses: actions/upload-artifact@v7
         with:
           name: pinhole-npm

@@ -11,7 +11,7 @@ use std::{
     env,
     error::Error,
     fs::{self, File},
-    io::{self, Read},
+    io::{self, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     process::Command,
@@ -20,9 +20,13 @@ use std::{
     time::{Duration, Instant},
 };
 use subtle::ConstantTimeEq;
+#[cfg(target_os = "macos")]
+use tokio::io::AsyncReadExt;
 
 #[cfg(target_os = "macos")]
 mod mac;
+#[cfg(target_os = "macos")]
+mod session;
 #[cfg(target_os = "macos")]
 mod tls;
 
@@ -30,7 +34,7 @@ type Result<T> = std::result::Result<T, Box<dyn Error>>;
 const PORT: u16 = 48731;
 const MAX_IMAGE: u64 = 64 * 1024 * 1024;
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
-const PAGE: &str = include_str!("page.html");
+const PAGE: &str = include_str!("../client/page.html");
 const HELP: &str = "Pinhole — private Mac control from your terminal
 
 Usage: pinhole [command]
@@ -165,8 +169,16 @@ fn mac_key(code: &str) -> Option<u16> {
     })
 }
 
+fn main() -> Result<()> {
+    #[cfg(target_os = "macos")]
+    if env::args().nth(1).as_deref() == Some("--session") {
+        return mac::run_app();
+    }
+    run()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run() -> Result<()> {
     let args: Vec<String> = env::args().skip(1).collect();
     if let [command] = args.as_slice() {
         match command.as_str() {
@@ -178,11 +190,27 @@ async fn main() -> Result<()> {
                 println!("pinhole {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
-            "permissions" => return permissions(),
             _ => {}
         }
     }
-    host(host_address(&args)?).await
+    #[cfg(target_os = "macos")]
+    if let [command, dir] = args.as_slice() {
+        if command == "--session" {
+            let dir = Path::new(dir);
+            let (start, connection) = session::connect(dir)?;
+            let result = if start.args == ["permissions"] {
+                permissions(connection, dir).await
+            } else {
+                match host_address(&start.args) {
+                    Ok(address) => host(address, start.state_dir, connection).await,
+                    Err(error) => Err(error),
+                }
+            };
+            session::finish(dir, result.is_ok())?;
+            return result;
+        }
+    }
+    Err("use the npm pinhole command to launch the background app".into())
 }
 
 fn host_address(args: &[String]) -> Result<SocketAddr> {
@@ -201,8 +229,14 @@ fn host_address(args: &[String]) -> Result<SocketAddr> {
 }
 
 #[cfg(target_os = "macos")]
-fn permissions() -> Result<()> {
-    let (screen, control) = mac::request_permissions();
+async fn permissions(mut connection: tokio::net::UnixStream, dir: &Path) -> Result<()> {
+    let (mut screen, control) = mac::request_permissions();
+    if !screen {
+        // Exercise the capture service so macOS can present its recording prompt.
+        // The probe uses the private CLI session directory and deletes its image.
+        let _ = capture_png(dir);
+        screen = mac::capture_allowed();
+    }
     println!(
         "Screen Recording: {}",
         if screen { "allowed" } else { "not yet allowed" }
@@ -216,10 +250,10 @@ fn permissions() -> Result<()> {
         }
     );
     if !screen || !control {
+        println!("Enable Pinhole in System Settings > Privacy & Security.");
         println!(
-            "Enable your terminal (or Pinhole, if listed) in System Settings > Privacy & Security."
+            "Keep this command open while enabling permissions, then press Ctrl-C and run pinhole."
         );
-        println!("Then restart your terminal if macOS asks and run pinhole.");
         let pane = if !screen {
             "ScreenCapture"
         } else {
@@ -230,6 +264,8 @@ fn permissions() -> Result<()> {
                 "x-apple.systempreferences:com.apple.preference.security?Privacy_{pane}"
             ))
             .status()?;
+        // Keep the native app alive so macOS can present and register the requests.
+        let _ = connection.read_u8().await;
     }
     Ok(())
 }
@@ -257,11 +293,14 @@ fn auto_ip() -> Result<IpAddr> {
 }
 
 #[cfg(target_os = "macos")]
-async fn host(address: SocketAddr) -> Result<()> {
+async fn host(
+    address: SocketAddr,
+    state_dir: Option<PathBuf>,
+    mut connection: tokio::net::UnixStream,
+) -> Result<()> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 
-    let dir = env::var_os("PINHOLE_STATE_DIR")
-        .map(PathBuf::from)
+    let dir = state_dir
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".pinhole")))
         .ok_or("HOME is unset")?;
     if dir.exists() && dir.symlink_metadata()?.file_type().is_symlink() {
@@ -309,10 +348,12 @@ async fn host(address: SocketAddr) -> Result<()> {
     let handle = axum_server::Handle::new();
     let shutdown = handle.clone();
     let stop = tokio::spawn(async move {
-        if tokio::signal::ctrl_c().await.is_ok() {
-            println!("\nStopping sharing…");
-            shutdown.graceful_shutdown(Some(Duration::from_secs(1)));
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {},
+            _ = connection.read_u8() => {},
         }
+        shutdown.graceful_shutdown(Some(Duration::from_secs(1)));
+        let _ = writeln!(io::stdout(), "\nStopping sharing…");
     });
     let result = axum_server::from_tcp_rustls(listener, tls)?
         .handle(handle)
@@ -343,7 +384,7 @@ async fn page() -> Response {
 async fn script() -> Response {
     reply(
         StatusCode::OK,
-        include_bytes!("app.js").to_vec(),
+        include_bytes!("../client/app.js").to_vec(),
         "text/javascript; charset=utf-8",
     )
 }
@@ -351,7 +392,7 @@ async fn script() -> Response {
 async fn style() -> Response {
     reply(
         StatusCode::OK,
-        include_bytes!("style.css").to_vec(),
+        include_bytes!("../client/style.css").to_vec(),
         "text/css; charset=utf-8",
     )
 }
@@ -359,7 +400,7 @@ async fn style() -> Response {
 async fn favicon() -> Response {
     reply(
         StatusCode::OK,
-        include_bytes!("pinhole.svg").to_vec(),
+        include_bytes!("../client/pinhole.svg").to_vec(),
         "image/svg+xml",
     )
 }
@@ -407,6 +448,13 @@ async fn shot(State(state): State<Arc<Shared>>, headers: HeaderMap) -> Response 
     if auth != StatusCode::OK {
         return auth_error(auth);
     }
+    #[cfg(target_os = "macos")]
+    if !mac::capture_allowed() {
+        return error(
+            StatusCode::FORBIDDEN,
+            "Allow Pinhole in Mac System Settings > Privacy & Security > Screen Recording, then restart pinhole",
+        );
+    }
     let result = tokio::task::spawn_blocking(move || {
         let _guard = state.capture_lock.lock().unwrap_or_else(|e| e.into_inner());
         capture_png(&state.dir).map_err(|e| e.to_string())
@@ -418,7 +466,7 @@ async fn shot(State(state): State<Arc<Shared>>, headers: HeaderMap) -> Response 
             eprintln!("capture failed: {failure:?}");
             error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                "Screen capture failed. Check Screen Recording permission for your terminal, then restart pinhole",
+                "Screen capture failed. Check Screen Recording permission for Pinhole, then restart pinhole",
             )
         }
     }
@@ -443,7 +491,7 @@ async fn control(State(state): State<Arc<Shared>>, headers: HeaderMap, body: Bod
         if !mac::input_allowed() {
             return error(
                 StatusCode::FORBIDDEN,
-                "Allow your terminal in Mac System Settings > Privacy & Security > Accessibility, then restart pinhole",
+                "Allow Pinhole in Mac System Settings > Privacy & Security > Accessibility, then restart pinhole",
             );
         }
         if let Err(message) = mac::apply(action) {

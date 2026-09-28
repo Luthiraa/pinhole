@@ -1,16 +1,18 @@
 {
   "name": "@luthiraa/pinhole",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Private Mac screen sharing and control from your terminal.",
   "license": "GPL-3.0-only",
   "private": true,
   "os": ["darwin"],
   "cpu": ["arm64", "x64"],
+  "engines": {"node": ">=18"},
   "bin": {
     "pinhole": "bin/pinhole"
   },
   "files": [
     "bin/pinhole",
+    "Pinhole.app/",
     "src/",
     "tests/",
     "Cargo.toml",
