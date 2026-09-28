@@ -1,7 +1,8 @@
 use axum::{
     body::{to_bytes, Body},
-    extract::State,
+    extract::{Request, State},
     http::{header, HeaderMap, StatusCode},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
@@ -31,6 +32,7 @@ mod session;
 mod tls;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
+const CLIENT_ORIGIN: &str = "https://pinhole-client.vercel.app";
 const PORT: u16 = 48731;
 const MAX_IMAGE: u64 = 64 * 1024 * 1024;
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
@@ -47,10 +49,11 @@ Usage: pinhole [command]
   pinhole --version             Print the version
   pinhole --help                Show this help
 
-Open the HTTPS address on your phone and enter the session code.
+Open the HTTPS host address on your phone to verify its certificate, then follow the link to the private web client and enter the session code.
 Keep this terminal open. Ctrl-C stops sharing.";
 
 struct Shared {
+    host_url: String,
     code: [u8; 6],
     dir: PathBuf,
     capture_lock: Mutex<()>,
@@ -319,12 +322,11 @@ async fn host(
     let code: [u8; 6] = secret.as_bytes().try_into()?;
     let app = Router::new()
         .route("/", get(page))
-        .route("/app.js", get(script))
-        .route("/style.css", get(style))
-        .route("/favicon.svg", get(favicon))
         .route("/shot", post(shot))
         .route("/control", post(control))
+        .layer(middleware::from_fn(client_access))
         .with_state(Arc::new(Shared {
+            host_url: format!("https://{address}/"),
             code,
             dir: dir.clone(),
             capture_lock: Mutex::new(()),
@@ -369,39 +371,58 @@ async fn host(
     Ok(())
 }
 
-async fn page() -> Response {
+async fn page(State(state): State<Arc<Shared>>) -> Response {
     let mut response = reply(
         StatusCode::OK,
-        include_str!("../client/page.html"),
+        format!("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Pinhole host</title><h1>Pinhole host</h1><p>Compare this host's certificate SHA-256 fingerprint with your terminal before continuing.</p><p><a href=\"{CLIENT_ORIGIN}/#host={}\">Open the private Pinhole client</a> and sign in to Vercel. Your session code stays on your device.</p></html>", state.host_url),
         "text/html; charset=utf-8",
     );
-    response.headers_mut().insert(header::CONTENT_SECURITY_POLICY,
-        "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'".parse().unwrap());
+    response.headers_mut().insert(
+        header::CONTENT_SECURITY_POLICY,
+        "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            .parse()
+            .unwrap(),
+    );
     response
 }
 
-async fn script() -> Response {
-    reply(
-        StatusCode::OK,
-        include_str!("../client/app.js"),
-        "text/javascript; charset=utf-8",
-    )
+fn allowed_origin(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ORIGIN)
+        .is_none_or(|origin| origin == CLIENT_ORIGIN)
 }
 
-async fn style() -> Response {
-    reply(
-        StatusCode::OK,
-        include_str!("../client/style.css"),
-        "text/css; charset=utf-8",
-    )
-}
-
-async fn favicon() -> Response {
-    reply(
-        StatusCode::OK,
-        include_str!("../client/pinhole.svg"),
-        "image/svg+xml",
-    )
+async fn client_access(request: Request, next: Next) -> Response {
+    if !allowed_origin(request.headers()) {
+        return error(StatusCode::FORBIDDEN, "This origin is not allowed");
+    }
+    let cross_origin = request.headers().contains_key(header::ORIGIN);
+    let mut response = if request.method() == axum::http::Method::OPTIONS {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        next.run(request).await
+    };
+    let headers = response.headers_mut();
+    headers.insert(header::VARY, "Origin".parse().unwrap());
+    if cross_origin {
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+            CLIENT_ORIGIN.parse().unwrap(),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            "POST, OPTIONS".parse().unwrap(),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            "Authorization, Content-Type".parse().unwrap(),
+        );
+        headers.insert(
+            "access-control-allow-private-network",
+            "true".parse().unwrap(),
+        );
+    }
+    response
 }
 
 fn authorization(state: &Shared, headers: &HeaderMap) -> StatusCode {
@@ -561,4 +582,25 @@ fn capture_png(dir: &Path) -> Result<Vec<u8>> {
 #[cfg(not(target_os = "macos"))]
 fn capture_png(_: &Path) -> Result<Vec<u8>> {
     Err("capture requires macOS".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_private_client_origin_is_allowed() {
+        let mut headers = HeaderMap::new();
+        assert!(allowed_origin(&headers));
+        headers.insert(header::ORIGIN, CLIENT_ORIGIN.parse().unwrap());
+        assert!(allowed_origin(&headers));
+        for origin in [
+            "https://evil.example",
+            "null",
+            "https://pinhole-client.vercel.app.evil.example",
+        ] {
+            headers.insert(header::ORIGIN, origin.parse().unwrap());
+            assert!(!allowed_origin(&headers));
+        }
+    }
 }

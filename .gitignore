@@ -3,3 +3,5 @@ dist/
 Pinhole.app/
 node_modules/
 *.tgz
+
+/client-repo/
