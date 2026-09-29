@@ -56,7 +56,7 @@ struct Shared {
     host_url: String,
     code: [u8; 6],
     dir: PathBuf,
-    capture_lock: Mutex<()>,
+    capture_slots: Arc<tokio::sync::Semaphore>,
     attempts: Mutex<Attempts>,
 }
 
@@ -326,7 +326,7 @@ async fn host(
             host_url: format!("https://{address}/"),
             code,
             dir: dir.clone(),
-            capture_lock: Mutex::new(()),
+            capture_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             attempts: Mutex::new(Attempts {
                 failures: 0,
                 blocked_until: None,
@@ -424,14 +424,6 @@ async fn client_access(request: Request, next: Next) -> Response {
 }
 
 fn authorization(state: &Shared, headers: &HeaderMap) -> StatusCode {
-    let mut attempts = state.attempts.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(until) = attempts.blocked_until {
-        if Instant::now() < until {
-            return StatusCode::TOO_MANY_REQUESTS;
-        }
-        attempts.failures = 0;
-        attempts.blocked_until = None;
-    }
     let valid = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
@@ -440,8 +432,15 @@ fn authorization(state: &Shared, headers: &HeaderMap) -> StatusCode {
             value.len() == state.code.len() && bool::from(state.code.ct_eq(value.as_bytes()))
         });
     if valid {
-        attempts.failures = 0;
         return StatusCode::OK;
+    }
+    let mut attempts = state.attempts.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(until) = attempts.blocked_until {
+        if Instant::now() < until {
+            return StatusCode::TOO_MANY_REQUESTS;
+        }
+        attempts.failures = 0;
+        attempts.blocked_until = None;
     }
     // ponytail: one LAN-wide limit; use per-client limits if this ever needs to serve many users.
     attempts.failures += 1;
@@ -466,6 +465,12 @@ async fn shot(State(state): State<Arc<Shared>>, headers: HeaderMap) -> Response 
     if auth != StatusCode::OK {
         return auth_error(auth);
     }
+    let Ok(permit) = state.capture_slots.clone().try_acquire_owned() else {
+        return error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Screen capture is busy. Retry shortly",
+        );
+    };
     #[cfg(target_os = "macos")]
     if !mac::capture_allowed() {
         return error(
@@ -474,7 +479,8 @@ async fn shot(State(state): State<Arc<Shared>>, headers: HeaderMap) -> Response 
         );
     }
     let result = tokio::task::spawn_blocking(move || {
-        let _guard = state.capture_lock.lock().unwrap_or_else(|e| e.into_inner());
+        // Hold the slot until capture finishes, even if the HTTP request is cancelled.
+        let _permit = permit;
         capture_png(&state.dir).map_err(|e| e.to_string())
     })
     .await;
@@ -495,8 +501,10 @@ async fn control(State(state): State<Arc<Shared>>, headers: HeaderMap, body: Bod
     if auth != StatusCode::OK {
         return auth_error(auth);
     }
-    let Ok(bytes) = to_bytes(body, 1024).await else {
-        return error(StatusCode::BAD_REQUEST, "Invalid control action");
+    let bytes = match tokio::time::timeout(Duration::from_secs(5), to_bytes(body, 1024)).await {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => return error(StatusCode::BAD_REQUEST, "Invalid control action"),
+        Err(_) => return error(StatusCode::REQUEST_TIMEOUT, "Control request timed out"),
     };
     let Ok(action) = serde_json::from_slice::<Control>(&bytes) else {
         return error(StatusCode::BAD_REQUEST, "Invalid control action");
@@ -585,6 +593,80 @@ fn capture_png(_: &Path) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn state() -> Arc<Shared> {
+        Arc::new(Shared {
+            host_url: "https://127.0.0.1:48731/".into(),
+            code: *b"123456",
+            dir: env::temp_dir(),
+            capture_slots: Arc::new(tokio::sync::Semaphore::new(1)),
+            attempts: Mutex::new(Attempts {
+                failures: 0,
+                blocked_until: None,
+            }),
+        })
+    }
+
+    #[test]
+    fn wrong_code_lockout_preserves_authenticated_access() {
+        let state = state();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer 000000".parse().unwrap());
+        for _ in 0..4 {
+            assert_eq!(authorization(&state, &headers), StatusCode::UNAUTHORIZED);
+        }
+        assert_eq!(
+            authorization(&state, &headers),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        headers.insert(header::AUTHORIZATION, "Bearer 123456".parse().unwrap());
+        assert_eq!(authorization(&state, &headers), StatusCode::OK);
+        headers.insert(header::AUTHORIZATION, "Bearer 000000".parse().unwrap());
+        assert_eq!(
+            authorization(&state, &headers),
+            StatusCode::TOO_MANY_REQUESTS
+        );
+        state.attempts.lock().unwrap().blocked_until =
+            Some(Instant::now() - Duration::from_secs(1));
+        assert_eq!(authorization(&state, &headers), StatusCode::UNAUTHORIZED);
+        assert_eq!(state.attempts.lock().unwrap().failures, 1);
+    }
+
+    #[tokio::test]
+    async fn busy_capture_rejects_extra_requests_without_queuing() {
+        let state = state();
+        let _permit = state.capture_slots.clone().try_acquire_owned().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer 123456".parse().unwrap());
+        assert_eq!(
+            shot(State(state), headers).await.status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
+    async fn control_rejects_unauthenticated_oversized_and_invalid_requests() {
+        let state = state();
+        assert_eq!(
+            control(State(state.clone()), HeaderMap::new(), Body::empty())
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer 123456".parse().unwrap());
+        for body in [
+            vec![b'x'; 1025],
+            br#"{"action":"click","x":2,"y":0,"button":"left"}"#.to_vec(),
+        ] {
+            assert_eq!(
+                control(State(state.clone()), headers.clone(), Body::from(body))
+                    .await
+                    .status(),
+                StatusCode::BAD_REQUEST
+            );
+        }
+    }
 
     #[test]
     fn host_port_is_fixed() {
