@@ -6,7 +6,7 @@ view and control your mac from a browser on the same wi-fi. run it in your termi
 
 ## how to use
 
-you need macos 11+, node.js 18+, rust, and the xcode command line tools.
+you need macos 12.3+, node.js 18+, rust, and the xcode command line tools.
 
 build and install:
 
@@ -25,7 +25,7 @@ start sharing:
 pinhole
 ```
 
-on your other device, open the host address printed in the terminal. compare its certificate fingerprint with the terminal before accepting the browser warning. follow the client link, sign in to vercel, and enter the six-digit code. allow local network access if asked.
+on your other device, open the host address printed in the terminal. compare its certificate fingerprint with the terminal before accepting the browser warning, then enter the six-digit code.
 
 tap, drag, scroll, or type to control your mac. keep the terminal open; ctrl-c stops sharing.
 

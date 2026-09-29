@@ -28,6 +28,8 @@ use tokio::io::AsyncReadExt;
 mod mac;
 #[cfg(target_os = "macos")]
 mod session;
+mod stream;
+mod tiles;
 #[cfg(target_os = "macos")]
 mod tls;
 
@@ -49,15 +51,13 @@ Usage: pinhole [command]
   pinhole --version             Print the version
   pinhole --help                Show this help
 
-Open the HTTPS host address on your phone to verify its certificate, then follow the link to the private web client and enter the session code.
+Open the HTTPS host address, compare the certificate fingerprint, then enter the session code.
 Keep this terminal open. Ctrl-C stops sharing.";
 
 struct Shared {
-    host_url: String,
     code: [u8; 6],
-    dir: PathBuf,
-    capture_slots: Arc<tokio::sync::Semaphore>,
     attempts: Mutex<Attempts>,
+    hub: Arc<stream::Hub>,
 }
 
 struct Attempts {
@@ -318,26 +318,23 @@ async fn host(
     let secret = format!("{:06}", u32::from_le_bytes(random) % 1_000_000);
     let code: [u8; 6] = secret.as_bytes().try_into()?;
     let app = Router::new()
-        .route("/", get(page))
-        .route("/shot", post(shot))
+        .route("/", get(stream::view_page))
+        .route("/stream", get(stream::socket))
         .route("/control", post(control))
         .layer(middleware::from_fn(client_access))
         .with_state(Arc::new(Shared {
-            host_url: format!("https://{address}/"),
             code,
-            dir: dir.clone(),
-            capture_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             attempts: Mutex::new(Attempts {
                 failures: 0,
                 blocked_until: None,
             }),
+            hub: stream::Hub::new(),
         }));
     let listener = std::net::TcpListener::bind(address)?;
     listener.set_nonblocking(true)?;
     let url = format!("https://{address}/");
     println!("Pinhole {}\n", env!("CARGO_PKG_VERSION"));
     println!("Open  {url}");
-    println!("Client  {CLIENT_ORIGIN}/#host={url}");
     println!("Code  {secret}\n");
     println!("Certificate SHA-256: {fingerprint}");
     println!("Compare this fingerprint before accepting the browser's certificate warning.");
@@ -369,32 +366,34 @@ async fn host(
     Ok(())
 }
 
-async fn page(State(state): State<Arc<Shared>>) -> Response {
-    let mut response = reply(
-        StatusCode::OK,
-        format!("<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>Pinhole host</title><h1>Pinhole host</h1><p>Compare this host's certificate SHA-256 fingerprint with your terminal before continuing.</p><p><a href=\"{CLIENT_ORIGIN}/#host={}\">Open the private Pinhole client</a> and sign in to Vercel. Your session code stays on your device.</p></html>", state.host_url),
-        "text/html; charset=utf-8",
-    );
-    response.headers_mut().insert(
-        header::CONTENT_SECURITY_POLICY,
-        "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
-            .parse()
-            .unwrap(),
-    );
-    response
-}
-
 fn allowed_origin(headers: &HeaderMap) -> bool {
-    headers
-        .get(header::ORIGIN)
-        .is_none_or(|origin| origin == CLIENT_ORIGIN)
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return true;
+    };
+    if origin.as_bytes() == CLIENT_ORIGIN.as_bytes() {
+        return true;
+    }
+    let (Some(origin), Some(host)) = (
+        origin.to_str().ok(),
+        headers
+            .get(header::HOST)
+            .and_then(|host| host.to_str().ok()),
+    ) else {
+        return false;
+    };
+    origin
+        .strip_prefix("https://")
+        .is_some_and(|rest| rest == host)
 }
 
 async fn client_access(request: Request, next: Next) -> Response {
     if !allowed_origin(request.headers()) {
         return error(StatusCode::FORBIDDEN, "This origin is not allowed");
     }
-    let cross_origin = request.headers().contains_key(header::ORIGIN);
+    let vercel = request
+        .headers()
+        .get(header::ORIGIN)
+        .is_some_and(|origin| origin.as_bytes() == CLIENT_ORIGIN.as_bytes());
     let mut response = if request.method() == axum::http::Method::OPTIONS {
         StatusCode::NO_CONTENT.into_response()
     } else {
@@ -402,7 +401,7 @@ async fn client_access(request: Request, next: Next) -> Response {
     };
     let headers = response.headers_mut();
     headers.insert(header::VARY, "Origin".parse().unwrap());
-    if cross_origin {
+    if vercel {
         headers.insert(
             header::ACCESS_CONTROL_ALLOW_ORIGIN,
             CLIENT_ORIGIN.parse().unwrap(),
@@ -424,13 +423,16 @@ async fn client_access(request: Request, next: Next) -> Response {
 }
 
 fn authorization(state: &Shared, headers: &HeaderMap) -> StatusCode {
-    let valid = headers
+    let value = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
-        .is_some_and(|value| {
-            value.len() == state.code.len() && bool::from(state.code.ct_eq(value.as_bytes()))
-        });
+        .unwrap_or("");
+    check_code(state, value)
+}
+
+fn check_code(state: &Shared, value: &str) -> StatusCode {
+    let valid = value.len() == state.code.len() && bool::from(state.code.ct_eq(value.as_bytes()));
     if valid {
         return StatusCode::OK;
     }
@@ -457,42 +459,6 @@ fn auth_error(status: StatusCode) -> Response {
         error(status, "Too many wrong codes. Try again in one minute")
     } else {
         error(status, "Invalid session code")
-    }
-}
-
-async fn shot(State(state): State<Arc<Shared>>, headers: HeaderMap) -> Response {
-    let auth = authorization(&state, &headers);
-    if auth != StatusCode::OK {
-        return auth_error(auth);
-    }
-    let Ok(permit) = state.capture_slots.clone().try_acquire_owned() else {
-        return error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Screen capture is busy. Retry shortly",
-        );
-    };
-    #[cfg(target_os = "macos")]
-    if !mac::capture_allowed() {
-        return error(
-            StatusCode::FORBIDDEN,
-            "Allow Pinhole in Mac System Settings > Privacy & Security > Screen Recording, then restart pinhole",
-        );
-    }
-    let result = tokio::task::spawn_blocking(move || {
-        // Hold the slot until capture finishes, even if the HTTP request is cancelled.
-        let _permit = permit;
-        capture_png(&state.dir).map_err(|e| e.to_string())
-    })
-    .await;
-    match result {
-        Ok(Ok(png)) => reply(StatusCode::OK, png, "image/png"),
-        failure => {
-            eprintln!("capture failed: {failure:?}");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "Screen capture failed. Check Screen Recording permission for Pinhole, then restart pinhole",
-            )
-        }
     }
 }
 
@@ -596,14 +562,12 @@ mod tests {
 
     fn state() -> Arc<Shared> {
         Arc::new(Shared {
-            host_url: "https://127.0.0.1:48731/".into(),
             code: *b"123456",
-            dir: env::temp_dir(),
-            capture_slots: Arc::new(tokio::sync::Semaphore::new(1)),
             attempts: Mutex::new(Attempts {
                 failures: 0,
                 blocked_until: None,
             }),
+            hub: stream::Hub::new(),
         })
     }
 
@@ -630,18 +594,6 @@ mod tests {
             Some(Instant::now() - Duration::from_secs(1));
         assert_eq!(authorization(&state, &headers), StatusCode::UNAUTHORIZED);
         assert_eq!(state.attempts.lock().unwrap().failures, 1);
-    }
-
-    #[tokio::test]
-    async fn busy_capture_rejects_extra_requests_without_queuing() {
-        let state = state();
-        let _permit = state.capture_slots.clone().try_acquire_owned().unwrap();
-        let mut headers = HeaderMap::new();
-        headers.insert(header::AUTHORIZATION, "Bearer 123456".parse().unwrap());
-        assert_eq!(
-            shot(State(state), headers).await.status(),
-            StatusCode::SERVICE_UNAVAILABLE
-        );
     }
 
     #[tokio::test]
@@ -690,5 +642,10 @@ mod tests {
             headers.insert(header::ORIGIN, origin.parse().unwrap());
             assert!(!allowed_origin(&headers));
         }
+        headers.insert(header::HOST, "127.0.0.1:48731".parse().unwrap());
+        headers.insert(header::ORIGIN, "https://127.0.0.1:48731".parse().unwrap());
+        assert!(allowed_origin(&headers));
+        headers.insert(header::ORIGIN, "http://127.0.0.1:48731".parse().unwrap());
+        assert!(!allowed_origin(&headers));
     }
 }

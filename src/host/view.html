@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pinhole</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font: 16px/1.4 sans-serif; }
+  body { display: grid; place-items: center; overflow: hidden; }
+  form { width: min(22rem, calc(100% - 2rem)); }
+  input, button { font: inherit; padding: 0.4rem 0.6rem; }
+  canvas { background: #000; touch-action: none; }
+  #keys { position: fixed; opacity: 0; width: 1px; height: 1px; border: 0; }
+  #status { position: fixed; left: 0; right: 0; bottom: 0; margin: 0; padding: 0.4rem 0.6rem; color: #ccc; }
+</style>
+<form id="gate">
+  <p>Compare this host's certificate fingerprint with the terminal, then enter the code.</p>
+  <input name="code" inputmode="numeric" autocomplete="off" maxlength="6" autofocus required>
+  <button>Connect</button>
+  <p id="err"></p>
+</form>
+<canvas id="screen" hidden></canvas>
+<input id="keys" aria-label="Keyboard" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" hidden>
+<p id="status" hidden></p>
+<script>
+const gate = document.getElementById('gate');
+const err = document.getElementById('err');
+const canvas = document.getElementById('screen');
+const keys = document.getElementById('keys');
+const status = document.getElementById('status');
+const ctx = canvas.getContext('2d');
+let code = '';
+let drawing = Promise.resolve();
+
+gate.addEventListener('submit', (event) => {
+  event.preventDefault();
+  code = new FormData(gate).get('code').toString().trim();
+  if (!/^\d{6}$/.test(code)) {
+    err.textContent = 'Enter the six-digit code.';
+    return;
+  }
+  err.textContent = '';
+  const socket = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/stream');
+  socket.binaryType = 'arraybuffer';
+  socket.onopen = () => socket.send(code);
+  socket.onmessage = (message) => {
+    if (typeof message.data === 'string') {
+      if (canvas.hidden) err.textContent = message.data;
+      else status.textContent = message.data;
+      return;
+    }
+    gate.hidden = true;
+    canvas.hidden = false;
+    keys.hidden = false;
+    status.hidden = false;
+    drawing = drawing.then(() => draw(message.data)).catch(() => {});
+  };
+  socket.onclose = () => {
+    if (!canvas.hidden) status.textContent = 'Disconnected.';
+  };
+});
+
+function fit() {
+  if (!canvas.width) return;
+  const scale = Math.min(innerWidth / canvas.width, innerHeight / canvas.height);
+  canvas.style.width = Math.floor(canvas.width * scale) + 'px';
+  canvas.style.height = Math.floor(canvas.height * scale) + 'px';
+}
+addEventListener('resize', fit);
+
+async function draw(buffer) {
+  const view = new DataView(buffer);
+  if (view.getUint8(0) === 1) {
+    canvas.width = view.getUint16(1);
+    canvas.height = view.getUint16(3);
+    fit();
+    status.textContent = '';
+    return;
+  }
+  if (view.getUint8(0) !== 2) return;
+  const bitmap = await createImageBitmap(new Blob([buffer.slice(5)], { type: 'image/jpeg' }));
+  ctx.drawImage(bitmap, view.getUint16(1), view.getUint16(3));
+  bitmap.close();
+}
+
+function norm(event) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+    y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+  };
+}
+
+function post(body) {
+  fetch('/control', {
+    method: 'POST',
+    headers: { authorization: 'Bearer ' + code, 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+let down = null;
+canvas.addEventListener('pointerdown', (event) => {
+  if (event.button !== 0 && event.button !== 2) return;
+  keys.focus();
+  canvas.setPointerCapture(event.pointerId);
+  down = { ...norm(event), button: event.button };
+});
+canvas.addEventListener('pointerup', (event) => {
+  if (!down) return;
+  const at = norm(event);
+  if (Math.hypot(at.x - down.x, at.y - down.y) > 0.004) {
+    post({ action: 'drag', x: down.x, y: down.y, to_x: at.x, to_y: at.y });
+  } else {
+    post({ action: 'click', x: at.x, y: at.y, button: down.button === 2 ? 'right' : 'left' });
+  }
+  down = null;
+});
+canvas.addEventListener('contextmenu', (event) => event.preventDefault());
+canvas.addEventListener('wheel', (event) => {
+  event.preventDefault();
+  const at = norm(event);
+  let delta = Math.round(-event.deltaY / 40);
+  if (delta === 0) delta = Math.sign(-event.deltaY);
+  delta = Math.max(-10, Math.min(10, delta));
+  if (delta) post({ action: 'scroll', x: at.x, y: at.y, delta });
+}, { passive: false });
+keys.addEventListener('keydown', (event) => {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.key.length !== 1) {
+    post({
+      action: 'key',
+      code: event.code,
+      meta: event.metaKey,
+      ctrl: event.ctrlKey,
+      alt: event.altKey,
+      shift: event.shiftKey,
+    });
+  } else {
+    post({ action: 'text', text: event.key });
+  }
+  event.preventDefault();
+});
+</script>
