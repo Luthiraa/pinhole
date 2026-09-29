@@ -41,8 +41,8 @@ const HELP: &str = "Pinhole — private Mac control from your terminal
 Usage: pinhole [command]
 
   pinhole                       Start sharing on your local network
-  pinhole host <ip> [port]       Choose a local address (default port: 48731)
-  pinhole start [ip] [port]      Start a manual background host
+  pinhole host <ip>              Choose a local address (port: 48731)
+  pinhole start [ip]             Start a manual background host
   pinhole status                Show background host status and connection code
   pinhole stop                  Stop the background host
   pinhole permissions           Request Screen Recording and Accessibility
@@ -224,13 +224,10 @@ fn host_address(args: &[String]) -> Result<SocketAddr> {
     let address = match args {
         [] => SocketAddr::new(auto_ip()?, PORT),
         [host, ip] if host == "host" => SocketAddr::new(ip.parse()?, PORT),
-        [host, ip, port] if host == "host" => SocketAddr::new(ip.parse()?, port.parse()?),
         _ => return Err("invalid command; run pinhole --help".into()),
     };
-    if !matches!(address.ip(), IpAddr::V4(ip) if ip.is_private() || ip.is_loopback())
-        || address.port() == 0
-    {
-        return Err("use a private IPv4 address and a nonzero port".into());
+    if !matches!(address.ip(), IpAddr::V4(ip) if ip.is_private() || ip.is_loopback()) {
+        return Err("use a private IPv4 address".into());
     }
     Ok(address)
 }
@@ -340,6 +337,7 @@ async fn host(
     let url = format!("https://{address}/");
     println!("Pinhole {}\n", env!("CARGO_PKG_VERSION"));
     println!("Open  {url}");
+    println!("Client  {CLIENT_ORIGIN}/#host={url}");
     println!("Code  {secret}\n");
     println!("Certificate SHA-256: {fingerprint}");
     println!("Compare this fingerprint before accepting the browser's certificate warning.");
@@ -587,6 +585,14 @@ fn capture_png(_: &Path) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_port_is_fixed() {
+        let args = ["host".into(), "192.168.1.10".into()];
+        assert_eq!(host_address(&args).unwrap().port(), PORT);
+        assert!(host_address(&["host".into(), "192.168.1.10".into(), "1234".into()]).is_err());
+        assert!(host_address(&["host".into(), "8.8.8.8".into()]).is_err());
+    }
 
     #[test]
     fn only_private_client_origin_is_allowed() {

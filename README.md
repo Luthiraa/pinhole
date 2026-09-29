@@ -16,11 +16,11 @@ pinhole permissions
 pinhole
 ```
 
-Keep `pinhole permissions` running while you enable **Pinhole** in **Screen Recording** and **Accessibility**. Then press **Ctrl-C** and run `pinhole`. A bundled background app owns these permissions; your terminal needs no recording or control access. On your phone, open the **https://** host address printed in the terminal and verify its certificate fingerprint. Follow its link to **https://pinhole-client.vercel.app**, sign in to Vercel, and enter the six-digit code. Both devices must be on the same network; allow browser local network access if prompted. Tap, drag, scroll, or type to control the Mac. **Ctrl-C** stops sharing.
+Keep `pinhole permissions` running while you enable **Pinhole** in **Screen Recording** and **Accessibility**. Then press **Ctrl-C** and run `pinhole`. A bundled background app owns these permissions; your terminal needs no recording or control access. On your phone, open the **https://** host address printed in the terminal and verify its certificate fingerprint. Follow its link to **https://pinhole-client.vercel.app**, sign in to Vercel, and enter the six-digit code. The link fills in the Mac address; the client remembers it after a successful connection, so subsequent visits need only the code. If your Mac’s IP changes, open its new client link. Both devices must be on the same network; allow browser local network access if prompted. Tap, drag, scroll, or type to control the Mac. **Ctrl-C** stops sharing.
 
-Use `pinhole host <mac-lan-ip> [port]` to choose an address, or `pinhole --help` for help.
+The host always uses port **48731**. Use `pinhole host <mac-lan-ip>` to choose an address, or `pinhole --help` for help.
 
-To share in the background, run `pinhole start [mac-lan-ip] [port]`. It prints the address and code and returns your terminal. `pinhole status` shows the connection details; `pinhole stop` stops sharing. This is a normal, visible macOS user service, started manually. It does not start at login or restart after failure. Its private log and service definition are stored in `~/.pinhole`, outside the login startup folders. Screen Recording and Accessibility permissions still apply.
+To share in the background, run `pinhole start [mac-lan-ip]`. It prints the address and code and returns your terminal. `pinhole status` shows the connection details; `pinhole stop` stops sharing. This is a normal, visible macOS user service, started manually. It does not start at login or restart after failure. Its private log and service definition are stored in `~/.pinhole`, outside the login startup folders. Screen Recording and Accessibility permissions still apply.
 
 The CLI installs its app at `~/Applications/Pinhole.app`. If Pinhole is missing from either permission list, click **+** and select that app.
 

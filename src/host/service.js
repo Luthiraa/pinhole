@@ -6,8 +6,8 @@ const { setTimeout: delay } = require('node:timers/promises');
 
 module.exports = async function service([command, ...args]) {
   if (process.platform !== 'darwin') throw new Error('The host requires macOS.');
-  if ((command === 'start' && args.length > 2) || (command !== 'start' && args.length)) {
-    throw new Error('Usage: pinhole start [ip] [port], pinhole status, or pinhole stop');
+  if ((command === 'start' && args.length > 1) || (command !== 'start' && args.length)) {
+    throw new Error('Usage: pinhole start [ip], pinhole status, or pinhole stop');
   }
   const root = path.resolve(process.env.PINHOLE_STATE_DIR || path.join(os.homedir(), '.pinhole'));
   const label = 'com.luthiraa.pinhole.host';
