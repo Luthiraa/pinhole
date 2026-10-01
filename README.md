@@ -4,22 +4,20 @@
 
 view and control your mac from a browser on the same wi-fi. run it in your terminal, then connect from your phone or another computer. the connection is encrypted and stays on your local network.
 
-## how to use
+## install
 
-you need macos 12.3+, node.js 18+, rust, and the xcode command line tools.
-
-build and install:
+requires macos 12.3+ and node.js 18+. the npm package includes native binaries for apple silicon and intel macs, so rust and xcode are not required.
 
 ```sh
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
-npm pack
-npm install -g ./luthiraa-pinhole-*.tgz
+npm install -g pinhole
 pinhole permissions
 ```
 
-enable pinhole in system settings → privacy & security → screen recording and accessibility. keep the command running while you do this, then press ctrl-c.
+or install it in a project with `npm install pinhole` and run it with `npx pinhole`.
 
-start sharing:
+enable pinhole in system settings → privacy & security → screen recording and accessibility. keep the permissions command running while you do this, then press ctrl-c.
+
+## use
 
 ```sh
 pinhole
@@ -29,4 +27,14 @@ on your other device, open the host address printed in the terminal. compare its
 
 tap, drag, scroll, or type to control your mac. keep the terminal open; ctrl-c stops sharing.
 
-for background sharing, use `pinhole start`. `pinhole status` shows the current address and code; `pinhole stop` stops it.
+for background sharing:
+
+```sh
+pinhole start
+pinhole status
+pinhole stop
+```
+
+## feedback
+
+if you try pinhole, please [open an issue](https://github.com/Luthiraa/pinhole/issues) with your macos version, mac model, client device and browser, and what worked or failed. feedback on setup, latency, image quality, controls, and the security model is especially useful.

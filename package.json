@@ -1,9 +1,11 @@
 {
-  "name": "@luthiraa/pinhole",
-  "version": "0.3.0",
+  "name": "pinhole",
+  "version": "1.0.0",
   "description": "Private Mac screen sharing and control from your terminal.",
   "license": "GPL-3.0-only",
-  "private": true,
+  "publishConfig": {
+    "access": "public"
+  },
   "os": [
     "darwin"
   ],
